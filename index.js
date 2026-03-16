@@ -14,14 +14,14 @@ functions.http("helloHttp", async (req, res) => {
 
     const productName = data.product_name || "product";
 
-    const hookClipUrl = data.hook_clip_url;
-    const scienceClipUrl = data.science_clip_url;
-    const productClipUrl = data.product_clip_url;
-    const narrationAudioUrl = data.narration_audio_url;
+    const hookClipUrl = data.hook_clip_url || "";
+    const scienceClipUrl = data.science_clip_url || "";
+    const productClipUrl = data.product_clip_url || "";
+    const narrationAudioUrl = data.narration_audio_url || "";
 
-    const introBumperLink = data.intro_bumper;
-    const outroBumperLink = data.outro_bumper;
-    const logoOverlayLink = data.logo_overlay;
+    const introBumperLink = data.intro_bumper || "";
+    const outroBumperLink = data.outro_bumper || "";
+    const logoOverlayLink = data.logo_overlay || "";
 
     if (!hookClipUrl || !scienceClipUrl || !productClipUrl || !narrationAudioUrl) {
       return res.status(400).json({
@@ -36,7 +36,6 @@ functions.http("helloHttp", async (req, res) => {
     }
 
     const accessToken = await getAccessToken();
-
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "assemble-"));
 
     const introPath = path.join(workDir, "intro.mp4");
@@ -75,17 +74,16 @@ functions.http("helloHttp", async (req, res) => {
     await downloadGcsFile(productClipUrl, productPath, accessToken);
     await downloadGcsFile(narrationAudioUrl, narrationPath, accessToken);
 
-    // Normalize ALL videos to consistent dimensions/framerate
-    // IMPORTANT: strip audio from Veo clips because their AAC streams are unstable
+    // Normalize videos and STRIP audio from AI-generated clips
     normalizeVideoVideoOnly(hookPath, hookNorm);
     normalizeVideoVideoOnly(sciencePath, scienceNorm);
     normalizeVideoVideoOnly(productPath, productNorm);
 
-    // Keep intro/outro simple for now but strip audio too to avoid mixed audio complications
+    // Also normalize intro/outro without audio for a cleaner first-pass assembly
     normalizeVideoVideoOnly(introPath, introNorm);
     normalizeVideoVideoOnly(outroPath, outroNorm);
 
-    // Concatenate hook + science + product into one middle video
+    // Concatenate middle clips
     fs.writeFileSync(
       concatFile,
       [
@@ -100,13 +98,13 @@ functions.http("helloHttp", async (req, res) => {
       "Concatenating middle clips failed"
     );
 
-    // Add narration as the ONLY audio on the middle section
+    // Add narration as the only audio for the middle section
     runCommand(
       `ffmpeg -y -i "${middleConcat}" -i "${narrationPath}" -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -shortest "${middleNarr}"`,
       "Muxing narration onto middle section failed"
     );
 
-    // Concatenate intro + middle_with_narration + outro
+    // Concatenate intro + middle + outro
     fs.writeFileSync(
       finalConcatFile,
       [
@@ -127,13 +125,12 @@ functions.http("helloHttp", async (req, res) => {
       "Logo overlay failed"
     );
 
-    const safeName = productName
+    const safeName = String(productName)
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
 
     const fileName = `${safeName}_${Date.now()}.mp4`;
-
     const bucket = "video_automation_assets";
     const object = `final_videos/${fileName}`;
 
@@ -143,7 +140,6 @@ functions.http("helloHttp", async (req, res) => {
       final_video_url: `gs://${bucket}/${object}`,
       render_status: "final_video_done"
     });
-
   } catch (err) {
     return res.status(500).json({
       error: "Assembly failed",
@@ -176,7 +172,6 @@ async function downloadDriveFile(link, outPath) {
   }
 
   const url = `https://drive.google.com/uc?export=download&id=${id}`;
-
   const res = await fetch(url);
 
   if (!res.ok) {
@@ -193,7 +188,7 @@ async function downloadDriveFile(link, outPath) {
 }
 
 async function downloadGcsFile(gsUri, outPath, token) {
-  const match = gsUri.match(/^gs:\/\/([^\/]+)\/(.+)$/);
+  const match = String(gsUri).match(/^gs:\/\/([^\/]+)\/(.+)$/);
   if (!match) {
     throw new Error(`Invalid gs:// URI: ${gsUri}`);
   }
@@ -226,8 +221,7 @@ async function downloadGcsFile(gsUri, outPath, token) {
 async function uploadFileToGcs(localPath, bucket, object, token) {
   const buffer = fs.readFileSync(localPath);
 
-  const url =
-    `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(object)}`;
+  const url = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(object)}`;
 
   const res = await fetch(url, {
     method: "POST",
@@ -245,7 +239,7 @@ async function uploadFileToGcs(localPath, bucket, object, token) {
 }
 
 function extractDriveId(url) {
-  const match = url.match(/[-\w]{25,}/);
+  const match = String(url).match(/[-\w]{25,}/);
   return match ? match[0] : null;
 }
 
@@ -262,7 +256,5 @@ async function getAccessToken() {
   }
 
   const data = await res.json();
-  return data.access_token;
-}
   return data.access_token;
 }
