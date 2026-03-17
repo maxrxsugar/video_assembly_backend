@@ -2,6 +2,7 @@
   "name": "video-assembly-backend",
   "version": "1.0.0",
   "dependencies": {
-    "@google-cloud/functions-framework": "^3.4.0"
+    "@google-cloud/functions-framework": "^3.4.0",
+    "@google-cloud/storage": "^7.14.0"
   }
 }
