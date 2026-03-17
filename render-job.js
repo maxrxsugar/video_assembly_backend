@@ -44,17 +44,15 @@ async function main() {
   const scienceNorm = path.join(workDir, "science_norm.mp4");
   const productNorm = path.join(workDir, "product_norm.mp4");
 
-  const middleConcat = path.join(workDir, "middle_concat.mp4");
-  const middleNarr = path.join(workDir, "middle_with_narration.mp4");
-
   const introNorm = path.join(workDir, "intro_norm.mp4");
   const outroNorm = path.join(workDir, "outro_norm.mp4");
 
-  const finalConcatInput = path.join(workDir, "final_concat_input.txt");
+  const middleConcatInput = path.join(workDir, "middle_concat_input.txt");
+  const middleConcat = path.join(workDir, "middle_concat.mp4");
+  const middleNarr = path.join(workDir, "middle_with_narration.mp4");
+
   const finalConcat = path.join(workDir, "final_concat.mp4");
   const finalOutput = path.join(workDir, "final_output.mp4");
-
-  const middleConcatInput = path.join(workDir, "middle_concat_input.txt");
 
   console.log("Downloading static assets...");
   await downloadDriveFile(introBumperLink, introPath);
@@ -67,6 +65,13 @@ async function main() {
   await downloadGcsFile(productClipUrl, productPath, accessToken);
   await downloadGcsFile(narrationAudioUrl, narrationPath, accessToken);
 
+  probeFile(introPath, "intro original");
+  probeFile(outroPath, "outro original");
+  probeFile(narrationPath, "narration original");
+  probeFile(hookPath, "hook original");
+  probeFile(sciencePath, "science original");
+  probeFile(productPath, "product original");
+
   console.log("Normalizing Veo clips as video-only...");
   normalizeVideoOnly(hookPath, hookNorm);
   normalizeVideoOnly(sciencePath, scienceNorm);
@@ -75,6 +80,12 @@ async function main() {
   console.log("Normalizing intro/outro with preserved audio...");
   normalizeVideoWithAudio(introPath, introNorm);
   normalizeVideoWithAudio(outroPath, outroNorm);
+
+  probeFile(introNorm, "intro normalized");
+  probeFile(outroNorm, "outro normalized");
+  probeFile(hookNorm, "hook normalized");
+  probeFile(scienceNorm, "science normalized");
+  probeFile(productNorm, "product normalized");
 
   console.log("Concatenating middle clips...");
   fs.writeFileSync(
@@ -91,32 +102,31 @@ async function main() {
     "Concatenating middle clips failed"
   );
 
-  console.log("Muxing narration onto middle...");
+  probeFile(middleConcat, "middle concatenated video-only");
+
+  console.log("Adding narration...");
   runCommand(
     `ffmpeg -y -i "${middleConcat}" -i "${narrationPath}" -map 0:v:0 -map 1:a:0 -vf "fps=30,format=yuv420p" -c:v libx264 -c:a aac -b:a 192k -ar 48000 -ac 2 -shortest "${middleNarr}"`,
     "Adding narration to middle failed"
   );
 
-  console.log("Concatenating intro + middle + outro...");
-  fs.writeFileSync(
-    finalConcatInput,
-    [
-      `file '${introNorm}'`,
-      `file '${middleNarr}'`,
-      `file '${outroNorm}'`
-    ].join("\n")
+  probeFile(middleNarr, "middle with narration");
+
+  console.log("Concatenating intro + middle + outro with filter_complex...");
+  runCommand(
+    `ffmpeg -y -i "${introNorm}" -i "${middleNarr}" -i "${outroNorm}" -filter_complex "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]" -map "[outv]" -map "[outa]" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalConcat}"`,
+    "Final concat with audio failed"
   );
 
-  runCommand(
-    `ffmpeg -y -f concat -safe 0 -i "${finalConcatInput}" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalConcat}"`,
-    "Final concatenation failed"
-  );
+  probeFile(finalConcat, "final concatenated before logo");
 
   console.log("Overlaying logo...");
   runCommand(
-    `ffmpeg -y -i "${finalConcat}" -i "${logoPath}" -filter_complex "overlay=W-w-40:40" -c:v libx264 -pix_fmt yuv420p -c:a copy "${finalOutput}"`,
+    `ffmpeg -y -i "${finalConcat}" -i "${logoPath}" -filter_complex "overlay=W-w-40:40" -map 0:v:0 -map 0:a:0 -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalOutput}"`,
     "Logo overlay failed"
   );
+
+  probeFile(finalOutput, "final output");
 
   console.log(`Uploading final video to ${outputGcsUri} ...`);
   await uploadFileToGcsUri(finalOutput, outputGcsUri, accessToken);
@@ -136,6 +146,18 @@ function normalizeVideoWithAudio(input, output) {
     `ffmpeg -y -i "${input}" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p" -c:v libx264 -c:a aac -b:a 192k -ar 48000 -ac 2 "${output}"`,
     `normalizeVideoWithAudio failed for ${input}`
   );
+}
+
+function probeFile(filePath, label) {
+  try {
+    const output = execSync(
+      `ffprobe -v error -show_streams -show_format "${filePath}"`,
+      { stdio: "pipe" }
+    ).toString();
+    console.log(`FFPROBE ${label}:\n${output}`);
+  } catch (err) {
+    console.log(`FFPROBE FAILED for ${label}: ${err.message}`);
+  }
 }
 
 function runCommand(command, label) {
