@@ -151,10 +151,10 @@ function normalizeVideoWithAudio(input, output) {
 function probeFile(filePath, label) {
   try {
     const output = execSync(
-      `ffprobe -v error -show_streams -show_format "${filePath}"`,
+      `ffprobe -v error -select_streams v:a -show_entries stream=index,codec_type,codec_name:format=duration -of compact=p=0:nk=1 "${filePath}"`,
       { stdio: "pipe" }
     ).toString();
-    console.log(`FFPROBE ${label}:\n${output}`);
+    console.log(`FFPROBE ${label}: ${output}`);
   } catch (err) {
     console.log(`FFPROBE FAILED for ${label}: ${err.message}`);
   }
