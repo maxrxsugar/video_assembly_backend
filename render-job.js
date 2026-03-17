@@ -71,12 +71,16 @@ async function main() {
   probeFile(introPath, "intro original");
   probeFile(outroPath, "outro original");
   probeFile(narrationPath, "narration original");
+  probeFile(hookPath, "hook original");
+  probeFile(sciencePath, "science original");
+  probeFile(productPath, "product original");
 
-  console.log("Normalizing videos...");
+  console.log("Normalizing Veo clips as video-only...");
   normalizeVideoOnly(hookPath, hookNorm);
   normalizeVideoOnly(sciencePath, scienceNorm);
   normalizeVideoOnly(productPath, productNorm);
 
+  console.log("Normalizing intro/outro with preserved audio...");
   normalizeVideoWithAudio(introPath, introNorm);
   normalizeVideoWithAudio(outroPath, outroNorm);
 
@@ -111,7 +115,7 @@ async function main() {
 
   probeFile(middleNarr, "middle with narration");
 
-  console.log("Concatenating intro + middle + outro...");
+  console.log("Concatenating intro + middle + outro with filter_complex...");
   runCommand(
     `ffmpeg -y -i "${introNorm}" -i "${middleNarr}" -i "${outroNorm}" -filter_complex "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]" -map "[outv]" -map "[outa]" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalConcat}"`,
     "Final concat with audio failed"
@@ -150,9 +154,10 @@ function normalizeVideoWithAudio(input, output) {
 function probeFile(filePath, label) {
   try {
     const output = execSync(
-      `ffprobe -v error -select_streams v:a -show_entries stream=index,codec_type,codec_name:format=duration -of compact=p=0:nk=1 "${filePath}"`,
+      `ffprobe -v error -show_entries stream=index,codec_type,codec_name,channels,sample_rate:format=duration -of compact=p=0:nk=0 "${filePath}"`,
       { stdio: "pipe" }
-    ).toString();
+    ).toString().trim();
+
     console.log(`FFPROBE ${label}: ${output}`);
   } catch (err) {
     console.log(`FFPROBE FAILED for ${label}: ${err.message}`);
@@ -239,7 +244,7 @@ function parseGsUri(gsUri) {
 }
 
 function extractDriveId(url) {
-  const match = String(url).match(/[-\\w]{25,}/);
+  const match = String(url).match(/[-\w]{25,}/);
   return match ? match[0] : null;
 }
 
