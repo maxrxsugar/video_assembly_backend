@@ -53,6 +53,9 @@ async function main() {
   const middleConcatInput = path.join(workDir, "middle_concat_input.txt");
   const middleConcat = path.join(workDir, "middle_concat.mp4");
   const middleNarr = path.join(workDir, "middle_with_narration.mp4");
+  const middleExtended = path.join(workDir, "middle_extended.mp4");
+  const freezeClip = path.join(workDir, "freeze_tail.mp4");
+  const extendConcatInput = path.join(workDir, "extend_concat_input.txt");
 
   const finalConcat = path.join(workDir, "final_concat.mp4");
   const finalOutput = path.join(workDir, "final_output.mp4");
@@ -107,9 +110,45 @@ async function main() {
 
   probeFile(middleConcat, "middle concatenated video-only");
 
+  console.log("Checking durations...");
+  const narrationDuration = getDuration(narrationPath);
+  const middleDuration = getDuration(middleConcat);
+
+  console.log(`Narration duration: ${narrationDuration}`);
+  console.log(`Middle duration: ${middleDuration}`);
+
+  let sourceForNarration = middleConcat;
+
+  if (narrationDuration > middleDuration) {
+    const freezeDuration = narrationDuration - middleDuration;
+    console.log(`Extending middle with freeze frame by ${freezeDuration} seconds...`);
+
+    runCommand(
+      `ffmpeg -y -sseof -0.1 -i "${middleConcat}" -vf "tpad=stop_mode=clone:stop_duration=${freezeDuration},fps=30,format=yuv420p" -c:v libx264 -an "${freezeClip}"`,
+      "Freeze frame generation failed"
+    );
+
+    fs.writeFileSync(
+      extendConcatInput,
+      [
+        `file '${middleConcat}'`,
+        `file '${freezeClip}'`
+      ].join("\n")
+    );
+
+    runCommand(
+      `ffmpeg -y -f concat -safe 0 -i "${extendConcatInput}" -c:v libx264 -pix_fmt yuv420p -an "${middleExtended}"`,
+      "Extending middle video failed"
+    );
+
+    sourceForNarration = middleExtended;
+  }
+
+  probeFile(sourceForNarration, "middle source before narration");
+
   console.log("Adding narration...");
   runCommand(
-    `ffmpeg -y -i "${middleConcat}" -i "${narrationPath}" -map 0:v:0 -map 1:a:0 -vf "fps=30,format=yuv420p" -c:v libx264 -c:a aac -b:a 192k -ar 48000 -ac 2 -shortest "${middleNarr}"`,
+    `ffmpeg -y -i "${sourceForNarration}" -i "${narrationPath}" -map 0:v:0 -map 1:a:0 -vf "fps=30,format=yuv420p" -c:v libx264 -c:a aac -b:a 192k -ar 48000 -ac 2 -shortest "${middleNarr}"`,
     "Adding narration to middle failed"
   );
 
@@ -125,7 +164,7 @@ async function main() {
 
   console.log("Overlaying logo...");
   runCommand(
-    `ffmpeg -y -i "${finalConcat}" -i "${logoPath}" -filter_complex "overlay=W-w-40:40" -map 0:v:0 -map 0:a:0 -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalOutput}"`,
+    `ffmpeg -y -i "${finalConcat}" -i "${logoPath}" -filter_complex "[1:v]scale=-1:10[logo];[0:v][logo]overlay=W-w-20:20" -map 0:v:0 -map 0:a:0 -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalOutput}"`,
     "Logo overlay failed"
   );
 
@@ -149,6 +188,15 @@ function normalizeVideoWithAudio(input, output) {
     `ffmpeg -y -i "${input}" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p" -c:v libx264 -c:a aac -b:a 192k -ar 48000 -ac 2 "${output}"`,
     `normalizeVideoWithAudio failed for ${input}`
   );
+}
+
+function getDuration(filePath) {
+  const output = execSync(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
+    { stdio: "pipe" }
+  ).toString().trim();
+
+  return parseFloat(output);
 }
 
 function probeFile(filePath, label) {
