@@ -164,7 +164,7 @@ async function main() {
 
   console.log("Overlaying logo...");
   runCommand(
-    `ffmpeg -y -i "${finalConcat}" -i "${logoPath}" -filter_complex "[1:v]scale=-1:10[logo];[0:v][logo]overlay=W-w-20:20" -map 0:v:0 -map 0:a:0 -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalOutput}"`,
+    `ffmpeg -y -i "${finalConcat}" -i "${logoPath}" -filter_complex "[1:v]scale=-1:80[logo];[0:v][logo]overlay=W-w-20:20" -map 0:v:0 -map 0:a:0 -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalOutput}"`,
     "Logo overlay failed"
   );
 
