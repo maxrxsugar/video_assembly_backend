@@ -2,6 +2,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execSync } = require("child_process");
+const { Storage } = require("@google-cloud/storage");
+
+const storage = new Storage();
 
 async function main() {
   const productName = process.env.PRODUCT_NAME || "product";
@@ -68,16 +71,12 @@ async function main() {
   probeFile(introPath, "intro original");
   probeFile(outroPath, "outro original");
   probeFile(narrationPath, "narration original");
-  probeFile(hookPath, "hook original");
-  probeFile(sciencePath, "science original");
-  probeFile(productPath, "product original");
 
-  console.log("Normalizing Veo clips as video-only...");
+  console.log("Normalizing videos...");
   normalizeVideoOnly(hookPath, hookNorm);
   normalizeVideoOnly(sciencePath, scienceNorm);
   normalizeVideoOnly(productPath, productNorm);
 
-  console.log("Normalizing intro/outro with preserved audio...");
   normalizeVideoWithAudio(introPath, introNorm);
   normalizeVideoWithAudio(outroPath, outroNorm);
 
@@ -112,7 +111,7 @@ async function main() {
 
   probeFile(middleNarr, "middle with narration");
 
-  console.log("Concatenating intro + middle + outro with filter_complex...");
+  console.log("Concatenating intro + middle + outro...");
   runCommand(
     `ffmpeg -y -i "${introNorm}" -i "${middleNarr}" -i "${outroNorm}" -filter_complex "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]" -map "[outv]" -map "[outa]" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 48000 -ac 2 "${finalConcat}"`,
     "Final concat with audio failed"
@@ -129,7 +128,7 @@ async function main() {
   probeFile(finalOutput, "final output");
 
   console.log(`Uploading final video to ${outputGcsUri} ...`);
-  await uploadFileToGcsUri(finalOutput, outputGcsUri, accessToken);
+  await uploadFileToGcsUri(finalOutput, outputGcsUri);
 
   console.log("Render complete.");
 }
@@ -218,28 +217,19 @@ async function downloadGcsFile(gsUri, outPath, token) {
   fs.writeFileSync(outPath, buffer);
 }
 
-async function uploadFileToGcsUri(localPath, gsUri, token) {
+async function uploadFileToGcsUri(localPath, gsUri) {
   const parsed = parseGsUri(gsUri);
   if (!parsed) {
     throw new Error(`Invalid output gs:// URI: ${gsUri}`);
   }
 
-  const buffer = fs.readFileSync(localPath);
-  const url = `https://storage.googleapis.com/upload/storage/v1/b/${parsed.bucket}/o?uploadType=media&name=${encodeURIComponent(parsed.object)}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "video/mp4"
-    },
-    body: buffer
+  await storage.bucket(parsed.bucket).upload(localPath, {
+    destination: parsed.object,
+    resumable: true,
+    metadata: {
+      contentType: "video/mp4"
+    }
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to upload final video: ${text}`);
-  }
 }
 
 function parseGsUri(gsUri) {
@@ -249,7 +239,7 @@ function parseGsUri(gsUri) {
 }
 
 function extractDriveId(url) {
-  const match = String(url).match(/[-\w]{25,}/);
+  const match = String(url).match(/[-\\w]{25,}/);
   return match ? match[0] : null;
 }
 
