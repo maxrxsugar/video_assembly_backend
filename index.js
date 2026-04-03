@@ -35,6 +35,31 @@ functions.http("helloHttp", async (req, res) => {
       });
     }
 
+    async function downloadFile(uri, outputPath, accessToken) {
+  if (!uri) {
+    throw new Error("Missing file URI");
+  }
+
+  if (uri.startsWith("gs://")) {
+    return await downloadGcsFile(uri, outputPath, accessToken);
+  }
+
+  if (uri.startsWith("http://") || uri.startsWith("https://")) {
+    const response = await fetch(uri);
+
+    if (!response.ok) {
+      throw new Error(`Failed to download HTTP file: ${uri} (HTTP ${response.status})`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    await fs.promises.writeFile(outputPath, buffer);
+    return;
+  }
+
+  throw new Error(`Unsupported file URI: ${uri}`);
+}
+
     const accessToken = await getAccessToken();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "assemble-"));
 
@@ -69,10 +94,10 @@ functions.http("helloHttp", async (req, res) => {
     await downloadDriveFile(logoOverlayLink, logoPath);
 
     // Download generated assets from GCS
-    await downloadGcsFile(hookClipUrl, hookPath, accessToken);
-    await downloadGcsFile(scienceClipUrl, sciencePath, accessToken);
-    await downloadGcsFile(productClipUrl, productPath, accessToken);
-    await downloadGcsFile(narrationAudioUrl, narrationPath, accessToken);
+    await downloadFile(hookClipUrl, hookPath, accessToken);
+    await downloadFile(scienceClipUrl, sciencePath, accessToken);
+    await downloadFile(productClipUrl, productPath, accessToken);
+    await downloadFile(narrationAudioUrl, narrationPath, accessToken);
 
     // Normalize videos and STRIP audio from AI-generated clips
     normalizeVideoVideoOnly(hookPath, hookNorm);
