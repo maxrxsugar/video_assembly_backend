@@ -2,9 +2,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execSync } = require("child_process");
-const { Storage } = require("@google-cloud/storage");
-
-const storage = new Storage();
 
 async function main() {
   const productName = process.env.PRODUCT_NAME || "product";
@@ -30,35 +27,6 @@ async function main() {
   if (!outputGcsUri) {
     throw new Error("Missing OUTPUT_GCS_URI");
   }
-
-  async function downloadFile(uri, outPath, token) {
-  if (!uri) {
-    throw new Error("Missing file URI");
-  }
-
-  if (String(uri).startsWith("gs://")) {
-    return await downloadGcsFile(uri, outPath, token);
-  }
-
-  if (String(uri).startsWith("http://") || String(uri).startsWith("https://")) {
-    const res = await fetch(uri);
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Failed to download HTTP file ${uri}: HTTP ${res.status} ${text}`);
-    }
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    if (!buffer.length) {
-      throw new Error(`Downloaded empty HTTP file: ${uri}`);
-    }
-
-    fs.writeFileSync(outPath, buffer);
-    return;
-  }
-
-  throw new Error(`Unsupported file URI: ${uri}`);
-}
 
   const accessToken = await getAccessToken();
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "assemble-"));
@@ -94,6 +62,7 @@ async function main() {
   await downloadDriveFile(outroBumperLink, outroPath);
   await downloadDriveFile(logoOverlayLink, logoPath);
 
+  console.log("USING MIXED downloadFile WRAPPER");
   console.log("Downloading generated assets...");
   await downloadFile(hookClipUrl, hookPath, accessToken);
   await downloadFile(scienceClipUrl, sciencePath, accessToken);
@@ -107,7 +76,7 @@ async function main() {
   probeFile(sciencePath, "science original");
   probeFile(productPath, "product original");
 
-  console.log("Normalizing Veo clips as video-only...");
+  console.log("Normalizing generated clips as video-only...");
   normalizeVideoOnly(hookPath, hookNorm);
   normalizeVideoOnly(sciencePath, scienceNorm);
   normalizeVideoOnly(productPath, productNorm);
@@ -126,9 +95,9 @@ async function main() {
   fs.writeFileSync(
     middleConcatInput,
     [
-      `file '${hookNorm}'`,
-      `file '${scienceNorm}'`,
-      `file '${productNorm}'`
+      `file '${hookNorm.replace(/'/g, "'\\''")}'`,
+      `file '${scienceNorm.replace(/'/g, "'\\''")}'`,
+      `file '${productNorm.replace(/'/g, "'\\''")}'`
     ].join("\n")
   );
 
@@ -160,8 +129,8 @@ async function main() {
     fs.writeFileSync(
       extendConcatInput,
       [
-        `file '${middleConcat}'`,
-        `file '${freezeClip}'`
+        `file '${middleConcat.replace(/'/g, "'\\''")}'`,
+        `file '${freezeClip.replace(/'/g, "'\\''")}'`
       ].join("\n")
     );
 
@@ -200,7 +169,7 @@ async function main() {
   probeFile(finalOutput, "final output");
 
   console.log(`Uploading final video to ${outputGcsUri} ...`);
-  await uploadFileToGcsUri(finalOutput, outputGcsUri);
+  await uploadFileToGcsUri(finalOutput, outputGcsUri, accessToken);
 
   console.log("Render complete.");
 }
@@ -307,97 +276,102 @@ async function downloadGcsFile(gsUri, outPath, token) {
   fs.writeFileSync(outPath, buffer);
 }
 
-async function downloadDriveFile(link, outPath) {
-  const id = extractDriveId(link);
-  if (!id) {
-    throw new Error(`Could not extract Drive file ID from link: ${link}`);
-  }
-
-  const url = `https://drive.google.com/uc?export=download&id=${id}`;
-  const res = await fetch(url);
+async function downloadDriveFile(driveLink, outPath) {
+  const directUrl = convertGoogleDriveLinkToDirectDownload(driveLink);
+  const res = await fetch(directUrl);
 
   if (!res.ok) {
-    throw new Error(`Failed to download Drive file: HTTP ${res.status} for ${link}`);
+    const text = await res.text();
+    throw new Error(`Failed to download Drive file: HTTP ${res.status} ${text}`);
   }
 
   const buffer = Buffer.from(await res.arrayBuffer());
   if (!buffer.length) {
-    throw new Error(`Downloaded empty Drive file: ${link}`);
+    throw new Error(`Downloaded empty Drive file: ${driveLink}`);
   }
 
   fs.writeFileSync(outPath, buffer);
 }
 
-async function downloadGcsFile(gsUri, outPath, token) {
+async function uploadFileToGcsUri(localPath, gsUri, token) {
   const parsed = parseGsUri(gsUri);
   if (!parsed) {
-    throw new Error(`Invalid gs:// URI: ${gsUri}`);
+    throw new Error(`Invalid OUTPUT_GCS_URI: ${gsUri}`);
   }
 
-  const url = `https://storage.googleapis.com/storage/v1/b/${parsed.bucket}/o/${encodeURIComponent(parsed.object)}?alt=media`;
+  const buffer = fs.readFileSync(localPath);
 
-  const res = await fetch(url, {
+  const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${parsed.bucket}/o?uploadType=media&name=${encodeURIComponent(parsed.object)}`;
+
+  const res = await fetch(uploadUrl, {
+    method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`
-    }
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "video/mp4"
+    },
+    body: buffer
   });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Failed to download GCS file ${gsUri}: HTTP ${res.status} ${text}`);
+    throw new Error(`Failed to upload final video: HTTP ${res.status} ${text}`);
   }
-
-  const buffer = Buffer.from(await res.arrayBuffer());
-  if (!buffer.length) {
-    throw new Error(`Downloaded empty GCS file: ${gsUri}`);
-  }
-
-  fs.writeFileSync(outPath, buffer);
-}
-
-async function uploadFileToGcsUri(localPath, gsUri) {
-  const parsed = parseGsUri(gsUri);
-  if (!parsed) {
-    throw new Error(`Invalid output gs:// URI: ${gsUri}`);
-  }
-
-  await storage.bucket(parsed.bucket).upload(localPath, {
-    destination: parsed.object,
-    resumable: true,
-    metadata: {
-      contentType: "video/mp4"
-    }
-  });
 }
 
 function parseGsUri(gsUri) {
-  const match = String(gsUri).match(/^gs:\/\/([^\/]+)\/(.+)$/);
+  const match = String(gsUri).match(/^gs:\/\/([^/]+)\/(.+)$/);
   if (!match) return null;
-  return { bucket: match[1], object: match[2] };
+
+  return {
+    bucket: match[1],
+    object: match[2]
+  };
 }
 
-function extractDriveId(url) {
-  const match = String(url).match(/[-\w]{25,}/);
-  return match ? match[0] : null;
+function convertGoogleDriveLinkToDirectDownload(url) {
+  const fileId = extractDriveFileId(url);
+  if (!fileId) {
+    throw new Error("Could not extract Google Drive file ID");
+  }
+  return `https://drive.google.com/uc?export=download&id=${fileId}`;
+}
+
+function extractDriveFileId(url) {
+  if (!url) return null;
+
+  const patterns = [
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /[?&]id=([a-zA-Z0-9_-]+)/,
+    /\/open\?id=([a-zA-Z0-9_-]+)/
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) return match[1];
+  }
+
+  return null;
 }
 
 async function getAccessToken() {
-  const res = await fetch(
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-    {
-      headers: { "Metadata-Flavor": "Google" }
-    }
-  );
+  const metadataUrl =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
-  if (!res.ok) {
-    throw new Error(`Failed to get access token: ${res.status}`);
+  const response = await fetch(metadataUrl, {
+    headers: {
+      "Metadata-Flavor": "Google"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get access token: ${response.status}`);
   }
 
-  const data = await res.json();
-  return data.access_token;
+  const tokenData = await response.json();
+  return tokenData.access_token;
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error("Assembly failed:", err);
   process.exit(1);
 });
