@@ -4,6 +4,7 @@ const path = require("path");
 const { execSync } = require("child_process");
 
 async function main() {
+  console.log("RENDER JOB VERSION: GROK_HTTP_PATCH_V1");
   const productName = process.env.PRODUCT_NAME || "product";
   const hookClipUrl = process.env.HOOK_CLIP_URL || "";
   const scienceClipUrl = process.env.SCIENCE_CLIP_URL || "";
@@ -62,6 +63,7 @@ async function main() {
   await downloadDriveFile(outroBumperLink, outroPath);
   await downloadDriveFile(logoOverlayLink, logoPath);
 
+  console.log("USING MIXED downloadFile WRAPPER");
   console.log("USING MIXED downloadFile WRAPPER");
   console.log("Downloading generated assets...");
   await downloadFile(hookClipUrl, hookPath, accessToken);
