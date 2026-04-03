@@ -31,6 +31,35 @@ async function main() {
     throw new Error("Missing OUTPUT_GCS_URI");
   }
 
+  async function downloadFile(uri, outPath, token) {
+  if (!uri) {
+    throw new Error("Missing file URI");
+  }
+
+  if (String(uri).startsWith("gs://")) {
+    return await downloadGcsFile(uri, outPath, token);
+  }
+
+  if (String(uri).startsWith("http://") || String(uri).startsWith("https://")) {
+    const res = await fetch(uri);
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to download HTTP file ${uri}: HTTP ${res.status} ${text}`);
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) {
+      throw new Error(`Downloaded empty HTTP file: ${uri}`);
+    }
+
+    fs.writeFileSync(outPath, buffer);
+    return;
+  }
+
+  throw new Error(`Unsupported file URI: ${uri}`);
+}
+
   const accessToken = await getAccessToken();
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "assemble-"));
 
@@ -66,10 +95,10 @@ async function main() {
   await downloadDriveFile(logoOverlayLink, logoPath);
 
   console.log("Downloading generated assets...");
-  await downloadGcsFile(hookClipUrl, hookPath, accessToken);
-  await downloadGcsFile(scienceClipUrl, sciencePath, accessToken);
-  await downloadGcsFile(productClipUrl, productPath, accessToken);
-  await downloadGcsFile(narrationAudioUrl, narrationPath, accessToken);
+  await downloadFile(hookClipUrl, hookPath, accessToken);
+  await downloadFile(scienceClipUrl, sciencePath, accessToken);
+  await downloadFile(productClipUrl, productPath, accessToken);
+  await downloadFile(narrationAudioUrl, narrationPath, accessToken);
 
   probeFile(introPath, "intro original");
   probeFile(outroPath, "outro original");
@@ -220,6 +249,62 @@ function runCommand(command, label) {
     const stdout = err.stdout ? err.stdout.toString() : "";
     throw new Error(`${label}: ${stderr || stdout || err.message}`);
   }
+}
+
+async function downloadFile(uri, outPath, token) {
+  if (!uri) {
+    throw new Error("Missing file URI");
+  }
+
+  if (String(uri).startsWith("gs://")) {
+    return await downloadGcsFile(uri, outPath, token);
+  }
+
+  if (String(uri).startsWith("http://") || String(uri).startsWith("https://")) {
+    const res = await fetch(uri);
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to download HTTP file ${uri}: HTTP ${res.status} ${text}`);
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) {
+      throw new Error(`Downloaded empty HTTP file: ${uri}`);
+    }
+
+    fs.writeFileSync(outPath, buffer);
+    return;
+  }
+
+  throw new Error(`Unsupported file URI: ${uri}`);
+}
+
+async function downloadGcsFile(gsUri, outPath, token) {
+  const parsed = parseGsUri(gsUri);
+  if (!parsed) {
+    throw new Error(`Invalid gs:// URI: ${gsUri}`);
+  }
+
+  const url = `https://storage.googleapis.com/storage/v1/b/${parsed.bucket}/o/${encodeURIComponent(parsed.object)}?alt=media`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to download GCS file ${gsUri}: HTTP ${res.status} ${text}`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!buffer.length) {
+    throw new Error(`Downloaded empty GCS file: ${gsUri}`);
+  }
+
+  fs.writeFileSync(outPath, buffer);
 }
 
 async function downloadDriveFile(link, outPath) {
